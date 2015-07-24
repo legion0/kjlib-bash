@@ -1,19 +1,29 @@
 kjlib_argparse__names=()
-kjlib_argparse__required=()
-kjlib_argparse__defaults=()
-kjlib_argparse__types=()
-kjlib_argparse__values=()
-kjlib_argparse__explicit=()
+declare -A kjlib_argparse__positional=()
+declare -A kjlib_argparse__defaults=()
+declare -A kjlib_argparse__required=()
+declare -A kjlib_argparse__types=()
+declare -A kjlib_argparse__values=()
+declare -A kjlib_argparse__explicit=()
 kjlib_argparse__size=0
 kjlib_argparse__passthrough=()
 
+RED='\033[0;31m'
+NC='\033[0m'
+
 function echo_arr() {
 	local n=$1
-	local a=""
+	local v=""
 	local s=0
-	eval "a=(\"\${${1}[@]}\")"
+	eval "k=(\"\${!${1}[@]}\")"
+	eval "v=(\"\${${1}[@]}\")"
 	eval "s=(\"\${#${1}[@]}\")"
-	echo "$n ($s): ${a[@]}"
+	echo -n "$n ($s): { "
+	for key in "${k[@]}"; do
+		eval "val=\"\${${1}[$key]}\""
+		echo -n "$key=$val "
+	done
+	echo "}"
 }
 function echo_var() {
 	local n=$1
@@ -22,38 +32,61 @@ function echo_var() {
 	echo "$n=$v"
 }
 
+
 function kjlib::argparse::define_int() {
 	echo "$FUNCNAME: $# { $@ }"
-	kjlib_argparse__types[$kjlib_argparse__size]="int"
+	local name="$1"; shift
+	local positional=true
+	if [[ "$name" == "--"* ]]; then
+		local name_len=${#name}
+		((name_len--))
+		name="${name:2:$name_len}"
+		positional=false
+	fi
+	kjlib_argparse__names[$kjlib_argparse__size]=$name
+	kjlib_argparse__types[$name]='int'
+	((kjlib_argparse__size++))
+	local has_default=false
+	local default=""
 	while [ $# -ne 0 ]; do
 		local arg="$1"; shift
 		arg=(${arg//=/ })
 		case ${arg[0]} in
-			name)
-				kjlib_argparse__names[$kjlib_argparse__size]=${arg[1]}
-			;;
 			default)
-				kjlib_argparse__defaults[$kjlib_argparse__size]=${arg[1]}
-			;;
-			required)
-				kjlib_argparse__required[$kjlib_argparse__size]=${arg[1]}
+				has_default=true
+				default=${arg[1]}
 			;;
 			*)
 				echo "OTHER ${arg[0]} = ${arg[1]} !!!"
 			;;
 		esac
 	done
-	((kjlib_argparse__size++))
+	local required=false
+	{ $positional || ! $has_default;} && required=true
+	$required && $has_default && _die "$name is required and has a redundant default value"
+	kjlib_argparse__positional[$name]=$positional
+	kjlib_argparse__required[$name]=$required
+	if $has_default; then
+		kjlib_argparse__defaults[$name]=$default
+	fi
+
 	echo_var kjlib_argparse__size
 	echo_arr kjlib_argparse__names
 	echo_arr kjlib_argparse__required
+	echo_arr kjlib_argparse__positional
 	echo_arr kjlib_argparse__defaults
-	echo_arr kjlib_argparse__types
 	echo ""
 }
 
-function _bool() {
-	[ "$1" == "true" ] && return 0|| return 1
+function _is_val_not_named_arg() {
+	local val="$1"
+	local name=""
+	for name in "${kjlib_argparse__names[@]}"; do
+		if [[ "$val" == "--${name}="* ]]; then
+			return 1
+		fi
+	done
+	return 0
 }
 
 function kjlib::argparse::init() {
@@ -84,37 +117,47 @@ function kjlib::argparse::init() {
 #	echo_var new_argc
 
 	# first parse positional args
-	for idx in $(seq 0 $((kjlib_argparse__size-1))); do
-		local required="${kjlib_argparse__required[$idx]}"
-		if _bool $required; then 
-			local name="${kjlib_argparse__names[$idx]}"
+	local i=0
+	for name in "${kjlib_argparse__names[@]}"; do
+		local positional="${kjlib_argparse__positional[$name]}"
+		if $positional; then 
 			echo_var name
-			echo pos !!!!!!!!!!!!!!!!!!!!!! not implemented
+			local val="${new_argv[$i]}"
+			echo_var val
+			_is_val_not_named_arg "$val" || _die "$name is missing or malformed"
+			kjlib_argparse__values[$name]="$val"
+			kjlib_argparse__explicit[$name]=true
+			((i++))
 		fi
 	done
+
+	echo ""
+
+	local first_optional=$i
 	# now extract named args
-	for ((idx=0; idx < $kjlib_argparse__size; idx++)); do
-		local required="${kjlib_argparse__required[$idx]}"
-		if ! _bool $required; then
-			local name="${kjlib_argparse__names[$idx]}"
-			echo_var name
-			local default="${kjlib_argparse__defaults[$idx]}"
-			local type_="${kjlib_argparse__types[$idx]}"
-			echo_var default
-			echo_var type_
-			local found=false
-			for ((i=0; i < $new_argc; i++)); do
+	for name in "${kjlib_argparse__names[@]}"; do
+		local positional="${kjlib_argparse__positional[$name]}"
+		local explicit=false
+		if ! $positional; then
+#			echo_var name
+			local val=""
+			local required="${kjlib_argparse__required[$name]}"
+			if ! $required ]; then
+				val="${kjlib_argparse__defaults[$name]}"
+			fi
+			for ((i=$first_optional; i < $new_argc; i++)); do
 				local arg="${new_argv[$i]}"
-				arg=(${arg//=/ })
-				echo_arr arg
-				if [ "${arg[0]}" == $name ]; then
-					echo "yurica !!!"
-					kjlib_argparse__values[$idx]="${arg[1]}"
-					kjlib_argparse__explicit[$idx]=true
+				if [[ "$arg" == "--${name}="* ]]; then
+					arg=(${arg//=/ })
+#					echo_arr arg
+					val="${arg[1]}"
+					explicit=true
 					break
 				fi
 			done
-			[ "${kjlib_argparse__explicit[$idx]}" != "true" ] && kjlib_argparse__explicit[$idx]=false
+			$required && ! $explicit && _die "$name is a required argument"
+			kjlib_argparse__explicit[$name]=$explicit
+			kjlib_argparse__values[$name]="$val"
 		fi
 	done
 	echo_arr kjlib_argparse__values
@@ -138,29 +181,30 @@ function print_stack_trace() {
 
 function _exception() {
 	local msg=$1
-	echo "ERROR: $msg" 1>&2
+	echo -e "${RED}ERROR: $msg" 1>&2
 	print_stack_trace 1>&2
+	echo -ne "$NC"
+	exit 1
+}
+
+function _die() {
+	local msg=$1
+	echo -e "${RED}ERROR: ${msg}${NC}" 1>&2
 	exit 1
 }
 
 function kjlib::argparse::get() {
-	local req_name="${1}"
-	[ "$req_name" != "" ] || _exception "Cannot get empty arg name"
-	local found=false
-	for ((idx=0; idx < $kjlib_argparse__size; idx++)); do
-		local name="${kjlib_argparse__names[$idx]}"
-		if [ "$name" == "$req_name" ]; then
-			if _bool ${kjlib_argparse__explicit[$idx]}; then
-				val="${kjlib_argparse__values[$idx]}"
-			else
-				val="${kjlib_argparse__defaults[$idx]}"
-			fi
-			found=true
-			break
-		fi
-	done
-	$found || _exception "No arg with the name: '$req_name'."
-	echo $val
+	local name="${1}"
+	local val=""
+	[ "$name" != "" ] || _exception "Cannot get empty arg name"
+	echo "${kjlib_argparse__values[$name]}"
+}
+
+function kjlib::argparse::explicit() {
+	local name="${1}"
+	local val=""
+	[ "$name" != "" ] || _exception "Cannot get empty arg name"
+	echo "${kjlib_argparse__explicit[$name]}"
 }
 
 
