@@ -91,10 +91,10 @@ function kjlib::argparse::init() {
 			((i++))
 		fi
 	done
+	local first_optional=$i
 
 #	echo ""
 
-	local first_optional=$i
 	# now extract named args
 	for name in "${__kjlib_argparse__names[@]}"; do
 		local positional="${__kjlib_argparse__positional[$name]}"
@@ -108,7 +108,12 @@ function kjlib::argparse::init() {
 			fi
 			for ((i=$first_optional; i < $new_argc; i++)); do
 				local arg="${new_argv[$i]}"
-				if [[ "$arg" == "--${name}="* ]]; then
+				if [ "$arg" == "--${name}" ]; then
+					((i++))
+					val="${new_argv[$i]}"
+					explicit=true
+					break
+				elif [[ "$arg" == "--${name}="* ]]; then
 					arg=(${arg//=/ })
 #					echo_arr arg
 					val="${arg[1]}"
