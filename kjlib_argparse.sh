@@ -20,13 +20,18 @@ function kjlib::argparse::define_int() {
 	((__kjlib_argparse__size++))
 	local has_default=false
 	local default=""
+	local help=""
 	while [ $# -ne 0 ]; do
 		local arg="$1"; shift
-		arg=(${arg//=/ })
-		case ${arg[0]} in
+		local arg_name=$(echo "$arg" | cut -d = -f 1)
+		local arg_val=$(echo "$arg" | cut -d = -f 2)
+		case $arg_name in
 			default)
 				has_default=true
-				default=${arg[1]}
+				default=$arg_val
+			;;
+			help)
+				help="$arg_val"
 			;;
 			*)
 				echo "OTHER ${arg[0]} = ${arg[1]} !!!"
@@ -38,6 +43,7 @@ function kjlib::argparse::define_int() {
 	$required && $has_default && die "$name is required and has a redundant default value"
 	__kjlib_argparse__positional[$name]=$positional
 	__kjlib_argparse__required[$name]=$required
+	__kjlib_argparse__helps[$name]="$help"
 	if $has_default; then
 		__kjlib_argparse__defaults[$name]=$default
 	fi
@@ -48,6 +54,98 @@ function kjlib::argparse::define_int() {
 #	echo_arr __kjlib_argparse__positional
 #	echo_arr __kjlib_argparse__defaults
 #	echo ""
+}
+
+function __has_required_options() {
+	for name in "${__kjlib_argparse__names[@]}"; do
+		local positional="${__kjlib_argparse__positional[$name]}"
+		local required="${__kjlib_argparse__required[$name]}"
+		if $required && ! $positional; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+function __has_optional_options() {
+	for name in "${__kjlib_argparse__names[@]}"; do
+		local required="${__kjlib_argparse__required[$name]}"
+		if ! $required; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+function __has_positional_options() {
+	for name in "${__kjlib_argparse__names[@]}"; do
+		local positional="${__kjlib_argparse__positional[$name]}"
+		if $positional; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+function __help_desc() {
+	local name="$1"
+	local positional="${__kjlib_argparse__positional[$name]}"
+	local required="${__kjlib_argparse__required[$name]}"
+	local default="${__kjlib_argparse__defaults[$name]}"
+	local help="${__kjlib_argparse__helps[$name]}"
+	if $positional; then
+		echo -n "$name:"
+	else
+		echo -n "--$name:"
+	fi
+	if [ "$help" != "" ]; then
+		echo -n " $help"
+	fi
+	if ! $required && ! $positional; then
+		echo -n " (default=$default)"
+	fi
+	echo "."
+}
+
+function kjlib::argparse::help() {
+	echo -n Usage: "${__kjlib_argparse__script_name} "
+	for name in "${__kjlib_argparse__names[@]}"; do
+		local positional="${__kjlib_argparse__positional[$name]}"
+		if $positional; then 
+			echo -n "<$name> "
+		fi
+	done
+	echo "[ options ]"
+	if __has_positional_options; then
+		echo "Required arguments:"
+		for name in "${__kjlib_argparse__names[@]}"; do
+			local positional="${__kjlib_argparse__positional[$name]}"
+			if $positional; then
+				__help_desc "$name"
+			fi
+		done
+	fi
+	if __has_required_options; then
+		echo "Required named arguments:"
+		for name in "${__kjlib_argparse__names[@]}"; do
+			local positional="${__kjlib_argparse__positional[$name]}"
+			local required="${__kjlib_argparse__required[$name]}"
+			if $required && ! $positional; then
+				__help_desc "$name"
+			fi
+		done
+	fi
+	if __has_optional_options; then
+		echo "Options:"
+		for name in "${__kjlib_argparse__names[@]}"; do
+			local positional="${__kjlib_argparse__positional[$name]}"
+			local required="${__kjlib_argparse__required[$name]}"
+			if ! $required && ! $positional; then
+				__help_desc "$name"
+			fi
+		done
+	fi
+	exit 0
 }
 
 function kjlib::argparse::init() {
@@ -158,8 +256,10 @@ declare -A __kjlib_argparse__required=()
 declare -A __kjlib_argparse__types=()
 declare -A __kjlib_argparse__values=()
 declare -A __kjlib_argparse__explicit=()
+declare -A __kjlib_argparse__helps=()
 __kjlib_argparse__size=0
 __kjlib_argparse__passthrough=()
+__kjlib_argparse__script_name=$(basename ${0})
 
 # Private functions
 
